@@ -4,3 +4,4 @@ numpy
 xgboost
 ipykernel
 matplotlib
+pyyaml
