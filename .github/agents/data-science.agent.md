@@ -152,7 +152,7 @@ Sections:
 4. **Univariate Analysis** — distributions for numeric and categorical columns
 5. **Bivariate Analysis** — correlations, pair plots, target vs features
 6. **Key Observations** — markdown cell summarising findings
-7. **Export EDA Summary** — programmatically build and write `../artifacts/eda_summary.yaml` following the schema defined in [YAML Artifact Schemas](#yaml-artifact-schemas). Print the path on success. This file is the hand-off to the Feature Engineering notebook.
+7. **Export EDA Summary** — programmatically build and write `../artifacts/eda_summary.yaml` following the schema defined in the **YAML Artifact Schemas** section above. Print the path on success. This file is the hand-off to the Feature Engineering notebook.
 
 ### 2. `app/02_feature_engineering.ipynb` — Feature Engineering
 Sections:
@@ -169,7 +169,7 @@ Sections:
    - Applies every transformation defined in this notebook (imputation, encoding, scaling, derived features)
    - Returns the fully transformed feature DataFrame ready for prediction
    - Is saved to `../artifacts/feature_pipeline.py` so it can be imported by the model notebook and used on unseen data
-10. **Export Feature Engineering Summary** — programmatically build and write `../artifacts/feature_engineering_summary.yaml` following the schema defined in [YAML Artifact Schemas](#yaml-artifact-schemas). All field values must be derived from the notebook's computed objects (fitted encoders, scaler column lists, derived column names, etc.) — never hard-coded. Print the path on success. This file is the hand-off to the Model Building notebook.
+10. **Export Feature Engineering Summary** — programmatically build and write `../artifacts/feature_engineering_summary.yaml` following the schema defined in the **YAML Artifact Schemas** section above. All field values must be derived from the notebook's computed objects (fitted encoders, scaler column lists, derived column names, etc.) — never hard-coded. Print the path on success. This file is the hand-off to the Model Building notebook.
 11. **Feature Summary** — markdown cell listing all final features
 
 ### 3. `app/03_model_building.ipynb` — Model Building
