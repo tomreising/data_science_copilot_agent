@@ -110,7 +110,9 @@ transformations:
     applied_to: [<col>, ...]
 paths:
   processed_data: ../data/processed_train.csv
-  feature_pipeline: ../artifacts/feature_pipeline.py
+  feature_pipeline: ../artifacts/feature_pipeline.py   # primary pipeline
+  feature_pipelines:                                    # present only when multiple pipelines exist
+    <pipeline_name>: ../artifacts/feature_pipeline.py  # e.g. lr, xgb, rf
 ```
 
 Populate every field programmatically from the notebook's computed values — do **not** hard-code values by hand.
@@ -141,6 +143,7 @@ This project uses **uv** as its Python package manager. The `requirements.txt` f
 - NEVER install a package without user permission. Check `requirements.txt` first; if a required library is missing, ask the user before proceeding.
 - ALWAYS read `ds_meta.md` before generating any notebook. Parse the `# Project Info` section first to establish the target variable, problem type, and other global settings, then apply per-stage requirements from the matching section heading.
 - **`pyyaml`** is required to read/write YAML artifacts. Verify it is listed in `requirements.txt` before generating any notebook. If it is missing, ask the user for permission to install it before proceeding.
+- **`artifacts/feature_pipeline.py` is MANDATORY and NON-NEGOTIABLE whenever a feature engineering notebook is generated.** This file must be written as a dedicated notebook cell (not just described in a comment). It must contain at least one self-contained `apply_feature_pipeline(df)` function (and additional pipeline functions when multiple model families are planned — see Section 9 for details) that reproduce every transformation applied in the notebook and return the transformed DataFrame. Failing to produce this file is a critical error.
 
 ## Notebook Specifications
 
@@ -164,11 +167,81 @@ Sections:
 6. **Scaling** — StandardScaler / MinMaxScaler for numerics
 7. **New Features** — derived/interaction features based on EDA findings
 8. **Save Processed Data** — write `../data/processed_train.csv`
-9. **Export Feature Pipeline** — extract all transformation steps into a standalone function `apply_feature_pipeline(df: pd.DataFrame) -> pd.DataFrame` that:
-   - Accepts a raw DataFrame **without** the target column
-   - Applies every transformation defined in this notebook (imputation, encoding, scaling, derived features)
-   - Returns the fully transformed feature DataFrame ready for prediction
-   - Is saved to `../artifacts/feature_pipeline.py` so it can be imported by the model notebook and used on unseen data
+9. **Export Feature Pipeline(s)** *(MANDATORY — do not skip)* — write a dedicated notebook cell that serialises all transformation steps into a standalone Python file `../artifacts/feature_pipeline.py`.
+
+   **Single-pipeline case** (all planned models share the same preprocessing): define one public function `apply_feature_pipeline(df)`.
+
+   **Multi-pipeline case** (planned models require different preprocessing — e.g. Logistic Regression needs StandardScaler + OHE while XGBoost/RandomForest need OrdinalEncoder and no scaling): define **one named function per pipeline family** in the same file, e.g. `apply_pipeline_lr(df)` and `apply_pipeline_xgb(df)`, plus a dispatcher dict `PIPELINES = {'lr': apply_pipeline_lr, 'xgb': apply_pipeline_xgb}`. Determine whether multiple pipelines are needed by inspecting the model experiments planned in `ds_meta.md` or inferred from the problem type — if any mix of linear and tree-based models is present, always emit the multi-pipeline form.
+
+   Regardless of which form is used, each pipeline function must:
+   - Accept a raw DataFrame **without** the target column
+   - Hard-code (inline) every fitted parameter needed for inference: imputation fill-values, encoder category mappings, scaler means/scales, derived-feature formulas, and columns to drop
+   - Return the fully transformed feature DataFrame with columns in the same order as the training set
+   - Be importable as a plain Python module by any downstream script or notebook
+
+   The file must also include a `if __name__ == '__main__':` smoke-test block that calls every exported pipeline function on a sample row.
+
+   The cell that writes this file must use Python `open()` / `write()` (or `pathlib Path.write_text()`) to emit the source code as a string, then print a confirmation. Example skeleton the cell must emit (multi-pipeline form):
+
+   ```python
+   # artifacts/feature_pipeline.py  (auto-generated — do not edit by hand)
+   import pandas as pd
+   import numpy as np
+
+   # ── shared fitted parameters ─────────────────────────────────────────
+   _DROP_COLS       = [...]          # columns to remove (all pipelines)
+   _IMPUTE_VALUES   = {...}          # {col: fill_value}
+   _ORDINAL_MAPS    = {...}          # {col: {category: int_code}}
+
+   # ── LR-specific parameters ───────────────────────────────────────────
+   _OHE_CATEGORIES  = {...}          # {col: [cat1, cat2, ...]}
+   _SCALER_MEAN     = {...}          # {col: mean}
+   _SCALER_SCALE    = {...}          # {col: std}
+
+   def _base_transforms(df: pd.DataFrame) -> pd.DataFrame:
+       """Shared steps: drop, impute, derived features."""
+       df = df.copy()
+       df = df.drop(columns=[c for c in _DROP_COLS if c in df.columns])
+       for col, val in _IMPUTE_VALUES.items():
+           if col in df.columns:
+               df[col] = df[col].fillna(val)
+       # derived features go here
+       return df
+
+   def apply_pipeline_lr(df: pd.DataFrame) -> pd.DataFrame:
+       """Pipeline for linear models: OHE + StandardScaler."""
+       df = _base_transforms(df)
+       for col, cats in _OHE_CATEGORIES.items():
+           if col in df.columns:
+               for cat in cats:
+                   df[f"{col}_{cat}"] = (df[col] == cat).astype(int)
+               df = df.drop(columns=[col])
+       for col in _SCALER_MEAN:
+           if col in df.columns:
+               df[col] = (df[col] - _SCALER_MEAN[col]) / _SCALER_SCALE[col]
+       return df
+
+   def apply_pipeline_xgb(df: pd.DataFrame) -> pd.DataFrame:
+       """Pipeline for tree-based models: OrdinalEncoder, no scaling."""
+       df = _base_transforms(df)
+       for col, mapping in _ORDINAL_MAPS.items():
+           if col in df.columns:
+               df[col] = df[col].map(mapping).fillna(-1).astype(int)
+       return df
+
+   # dispatcher — use PIPELINES['lr'](df) or PIPELINES['xgb'](df)
+   PIPELINES = {'lr': apply_pipeline_lr, 'xgb': apply_pipeline_xgb}
+
+   # convenience alias for single-pipeline callers
+   apply_feature_pipeline = apply_pipeline_lr
+
+   if __name__ == "__main__":
+       sample = pd.DataFrame([{...}])  # one raw sample row
+       print("LR:",  apply_pipeline_lr(sample).shape)
+       print("XGB:", apply_pipeline_xgb(sample).shape)
+   ```
+
+   **Fill in every `...` with real values derived from the notebook's fitted objects — never leave placeholders.** If only one model family is needed, collapse to the single-pipeline form but keep the `apply_feature_pipeline` alias.
 10. **Export Feature Engineering Summary** — programmatically build and write `../artifacts/feature_engineering_summary.yaml` following the schema defined in the **YAML Artifact Schemas** section above. All field values must be derived from the notebook's computed objects (fitted encoders, scaler column lists, derived column names, etc.) — never hard-coded. Print the path on success. This file is the hand-off to the Model Building notebook.
 11. **Feature Summary** — markdown cell listing all final features
 
@@ -204,7 +277,7 @@ Sections:
 7. Use `from pathlib import Path` for all path references inside notebooks; always anchor paths to `Path('..')` (project root relative to `app/`).
 8. Ensure notebook 01 writes `artifacts/eda_summary.yaml` and notebook 02 reads it before making any transformation decisions.
 9. Ensure notebook 02 writes `artifacts/feature_engineering_summary.yaml` and notebook 03 reads it before configuring models.
-10. Ensure `artifacts/feature_pipeline.py` is written during notebook 02 and its path is recorded in `feature_engineering_summary.yaml` for consumption by notebook 03.
+10. Ensure `artifacts/feature_pipeline.py` is written during notebook 02 and its path(s) recorded in `feature_engineering_summary.yaml` (`paths.feature_pipeline` for a single pipeline; `paths.feature_pipelines` dict for multiple). **Determine upfront whether the planned model experiments require different preprocessing (e.g. linear models need scaling+OHE, tree models need ordinal encoding only) — if so, emit multiple named pipeline functions in the same file. After generating the notebook, verify that a cell writing `feature_pipeline.py` actually exists in the notebook source. If it is absent, add it before finishing — this is a blocking requirement.**
 11. Ensure every model trained in notebook 03 is saved with a timestamped filename inside `artifacts/models/`.
 12. After creating all files, summarise what was generated and suggest a natural next step.
 
